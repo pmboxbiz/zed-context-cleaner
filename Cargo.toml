@@ -1,0 +1,28 @@
+[package]
+name = "zed-context-cleaner"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "zed-context-cleaner"
+path = "src/main.rs"
+
+[dependencies]
+eframe = { version = "0.27", features = ["default"] }
+egui = "0.27"
+rusqlite = { version = "0.31", features = ["bundled"] }
+zstd = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4"] }
+dirs = "5"
+anyhow = "1"
+rfd = "0.14"
+log = "0.4.29"
+env_logger = "0.11.10"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

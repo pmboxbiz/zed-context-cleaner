@@ -1,0 +1,9 @@
+/target
+/backups
+*.log
+*.exe
+*.pdb
+.DS_Store
+Thumbs.db
+/docs
+/src/bin
