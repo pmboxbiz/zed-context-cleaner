@@ -10,7 +10,6 @@ use std::collections::HashMap;
 // ---------------------------------------------------------------------------
 
 const PRESERVE_TOOLS: &[&str] = &[
-    "edit_file",
     "create_directory",
     "copy_path",
     "move_path",
@@ -798,7 +797,23 @@ pub fn analyze_thread(thread: &DbThread, keep_last_n: usize) -> ThreadAnalysis {
                         if is_protected {
                             entry.3 += 1; // in_protected
                         } else {
-                            entry.4 += bytes; // cleanable_bytes
+                            // Calculate actual savings: bytes saved = original - truncated
+                            let limit = tool_byte_limit(&result.tool_name, &CleanConfig::default());
+                            let content_savings = match limit {
+                                Some(lim) if bytes > lim => bytes - lim,
+                                _ => 0,
+                            };
+                            // Also count output field savings (truncated at limit/2)
+                            let output_bytes = result
+                                .output
+                                .as_ref()
+                                .map(|o| serde_json::to_string(o).unwrap_or_default().len())
+                                .unwrap_or(0);
+                            let output_savings = match limit {
+                                Some(lim) if output_bytes > lim / 2 => output_bytes - lim / 2,
+                                _ => 0,
+                            };
+                            entry.4 += content_savings + output_savings; // cleanable_bytes = actual savings
                         }
                     }
                 }
@@ -1075,7 +1090,7 @@ mod tests {
         let long_content = "x".repeat(50000);
         let thread = make_thread(vec![
             make_user("u1"),
-            make_agent_with_tool_result("edit_file", &long_content),
+            make_agent_with_tool_result("create_directory", &long_content),
         ]);
         let cleaned = clean_thread(&thread, &config_keep_0());
 
