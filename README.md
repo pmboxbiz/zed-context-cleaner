@@ -215,7 +215,7 @@ Backups are raw uncompressed JSON, readable in any text editor.
 | `grep`            | Truncated to **2,000 bytes** |
 | `find_path`       | Truncated to **2,000 bytes** |
 | `list_directory`  | Truncated to **2,000 bytes** |
-| `edit_file`       | **Kept in full**             |
+| `edit_file`       | Truncated to **2,000 bytes** |
 | `create_directory` | **Kept in full**            |
 | `copy_path`       | **Kept in full**             |
 | `move_path`       | **Kept in full**             |
@@ -236,6 +236,8 @@ Truncated results get a suffix: `... [TRUNCATED: N bytes omitted]`
 | Duplicate `read_file` results  | Replaced with placeholder; only the **last** call is kept      |
 | `request_token_usage`          | Recalculated (orphaned entries removed)                        |
 | `cumulative_token_usage`       | Recalculated from remaining usage entries                      |
+| Large `Image` blocks in User messages | Replaced with placeholder (optional, enabled by default) |
+| Large `Mention` attachments    | Content truncated, URI preserved (optional)                    |
 
 ### What Is Never Touched
 
