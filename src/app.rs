@@ -1163,7 +1163,66 @@ impl ZedContextCleanerApp {
                         .map(|p| p.bytes_to_remove)
                         .unwrap_or(0);
 
-                    let total_savings = tool_savings + thinking_savings;
+                    // Calculate image/attachment savings from non-protected User messages
+                    let image_savings: usize = if self.remove_large_images {
+                        if let Some(thread) = &self.loaded_thread {
+                            let protected = cleaner::compute_protected_indices(
+                                &thread.messages,
+                                self.keep_last_n,
+                            );
+                            let threshold = 10_000usize;
+                            thread
+                                .messages
+                                .iter()
+                                .enumerate()
+                                .filter(|(idx, _)| !protected.contains(idx))
+                                .filter_map(|(_, msg)| {
+                                    if let Message::User { user } = msg {
+                                        Some(&user.content)
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .flatten()
+                                .filter_map(|c| {
+                                    if let crate::types::UserContent::Other(val) = c {
+                                        let size =
+                                            serde_json::to_string(val).unwrap_or_default().len();
+                                        if size > threshold {
+                                            // Check if it's Image or large Mention
+                                            if val.get("Image").is_some() {
+                                                Some(size)
+                                            } else if let Some(mention) = val.get("Mention") {
+                                                if let Some(content) =
+                                                    mention.get("content").and_then(|c| c.as_str())
+                                                {
+                                                    if content.len() > threshold {
+                                                        Some(size)
+                                                    } else {
+                                                        None
+                                                    }
+                                                } else {
+                                                    None
+                                                }
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .sum()
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+
+                    let total_savings = tool_savings + thinking_savings + image_savings;
 
                     ui.add_space(8.0);
                     if let Some(stats) = &self.thread_stats {
