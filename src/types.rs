@@ -182,3 +182,32 @@ pub struct CleanupPreview {
     pub estimated_new_size: usize,
     pub reduction_percent: f32,
 }
+
+/// Per-tool analysis entry - one row in the category breakdown table.
+#[allow(dead_code)]
+#[derive(Debug, Clone)]
+pub struct ToolCategoryStats {
+    pub tool_name: String,
+    pub count: usize,
+    pub total_bytes: usize,
+    pub max_bytes: usize,
+    /// Number of results inside the protected (keep_last_n) zone.
+    pub in_protected: usize,
+    /// Bytes outside the protected zone (actually cleanable).
+    pub cleanable_bytes: usize,
+}
+
+/// Full detailed analysis of a thread, computed by cleaner::analyze_thread.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Default)]
+pub struct ThreadAnalysis {
+    /// Per-tool-name stats, sorted by total_bytes descending.
+    pub categories: Vec<ToolCategoryStats>,
+    pub total_tool_result_bytes: usize,
+    pub total_agent_text_bytes: usize,
+    pub total_tool_use_bytes: usize,
+    pub total_user_bytes: usize,
+    pub grand_total_bytes: usize,
+    pub message_count: usize,
+    pub protected_message_count: usize,
+}

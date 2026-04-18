@@ -105,6 +105,15 @@ pub struct ZedContextCleanerApp {
 
     /// Skip polling on the frame cleanup was started
     cleanup_started_this_frame: bool,
+
+    /// Per-tool-category analysis for the currently loaded thread
+    thread_analysis: Option<ThreadAnalysis>,
+
+    /// Checkbox state: tool_name -> enabled (true = will be cleaned)
+    category_checks: HashMap<String, bool>,
+
+    /// Remove large images/files from old User messages
+    remove_large_images: bool,
 }
 
 fn format_bytes(bytes: usize) -> String {
@@ -155,6 +164,9 @@ impl ZedContextCleanerApp {
             backup_list: Vec::new(),
             cleanup_rx: None,
             cleanup_started_this_frame: false,
+            thread_analysis: None,
+            category_checks: HashMap::new(),
+            remove_large_images: true,
         };
 
         if let Some(path) = db::default_db_path() {
@@ -219,6 +231,8 @@ impl ZedContextCleanerApp {
         self.cleanup_preview = None;
         self.preview_dirty = false;
         self.type_cache.clear();
+        self.thread_analysis = None;
+        self.category_checks.clear();
 
         let Some(path) = &self.db_path else {
             log::error!("No database path set");
@@ -345,6 +359,17 @@ impl ZedContextCleanerApp {
                 );
 
                 self.thread_stats = Some(stats);
+
+                // Compute per-tool-category analysis
+                let analysis = cleaner::analyze_thread(&thread, self.keep_last_n);
+                let checks: HashMap<String, bool> = analysis
+                    .categories
+                    .iter()
+                    .map(|c| (c.tool_name.clone(), c.cleanable_bytes > 10_000))
+                    .collect();
+                self.category_checks = checks;
+                self.thread_analysis = Some(analysis);
+
                 self.loaded_thread = Some(thread);
                 self.loaded_raw_json = Some(raw_json);
                 self.loaded_data_type = Some(data_type);
@@ -446,6 +471,13 @@ impl ZedContextCleanerApp {
         };
 
         let keep_last_n = self.keep_last_n;
+        let remove_large_images = self.remove_large_images;
+        let skip_tool_names: Vec<String> = self
+            .category_checks
+            .iter()
+            .filter(|(_, &checked)| !checked)
+            .map(|(name, _)| name.clone())
+            .collect();
 
         let (tx, rx) = mpsc::channel();
         self.cleanup_rx = Some(rx);
@@ -494,6 +526,8 @@ impl ZedContextCleanerApp {
                 // Clean
                 let config = CleanConfig {
                     keep_last_n_dialogs: keep_last_n,
+                    skip_tool_names,
+                    remove_large_images,
                     ..Default::default()
                 };
                 let cleaned = cleaner::clean_thread(&thread, &config);
@@ -1034,33 +1068,6 @@ impl ZedContextCleanerApp {
                             ));
                             ui.end_row();
                         });
-
-                    // Top tools bar chart
-                    if !stats.tool_call_counts.is_empty() {
-                        ui.add_space(8.0);
-                        ui.label(egui::RichText::new("Top Tools").strong());
-                        ui.add_space(4.0);
-
-                        let max_count = stats
-                            .tool_call_counts
-                            .iter()
-                            .map(|(_, c)| *c)
-                            .max()
-                            .unwrap_or(1)
-                            .max(1);
-
-                        for (name, count) in &stats.tool_call_counts {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{:>20}", name));
-                                let fraction = *count as f32 / max_count as f32;
-                                ui.add(
-                                    egui::ProgressBar::new(fraction)
-                                        .text(format!("{}", count))
-                                        .desired_width(200.0),
-                                );
-                            });
-                        }
-                    }
                 }
 
                 ui.separator();
@@ -1075,58 +1082,117 @@ impl ZedContextCleanerApp {
                     ui.add(egui::Slider::new(&mut self.keep_last_n, 0..=50));
                 });
                 if old_keep != self.keep_last_n {
-                    log::info!(
-                        "keep_last_n changed from {} to {}",
-                        old_keep,
-                        self.keep_last_n
-                    );
                     self.preview_dirty = true;
                 }
 
-                ui.separator();
+                ui.add_space(4.0);
 
-                // Preview
-                if let Some(preview) = &self.cleanup_preview {
-                    ui.heading("Preview");
+                // Always cleaned (info)
+                ui.label(
+                    egui::RichText::new("Always removed: Thinking blocks, reasoning_details, initial_project_snapshot")
+                        .small()
+                        .color(egui::Color32::GRAY),
+                );
+
+                ui.add_space(2.0);
+                ui.checkbox(&mut self.remove_large_images, "Remove large images/files from old messages");
+
+                ui.add_space(6.0);
+
+                // Tool category checkboxes
+                if let Some(analysis) = self.thread_analysis.clone() {
+                    ui.label(egui::RichText::new("Tool Results to Clean:").strong());
                     ui.add_space(4.0);
 
-                    if let Some(stats) = &self.thread_stats {
-                        ui.horizontal(|ui| {
-                            ui.label("Estimated size:");
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{} -> {} (-{:.1}%)",
-                                    format_bytes(stats.uncompressed_size),
-                                    format_bytes(preview.estimated_new_size),
-                                    preview.reduction_percent,
-                                ))
-                                .strong(),
-                            );
-                        });
-                    }
-
-                    egui::Grid::new("preview_grid")
-                        .num_columns(2)
-                        .spacing([20.0, 4.0])
+                    egui::Grid::new("category_grid")
+                        .num_columns(4)
+                        .min_col_width(8.0)
+                        .spacing([10.0, 3.0])
+                        .striped(true)
                         .show(ui, |ui| {
-                            ui.label("Thinking blocks removed:");
-                            ui.label(format!("{}", preview.thinking_blocks_removed));
+                            // Header
+                            ui.label("");
+                            ui.label(egui::RichText::new("Tool").strong().small());
+                            ui.label(egui::RichText::new("Calls").strong().small());
+                            ui.label(egui::RichText::new("Size (cleanable)").strong().small());
                             ui.end_row();
 
-                            ui.label("Tool results truncated:");
-                            ui.label(format!("{}", preview.tool_results_truncated));
-                            ui.end_row();
+                            for cat in &analysis.categories {
+                                if let Some(checked) =
+                                    self.category_checks.get_mut(&cat.tool_name)
+                                {
+                                    ui.add(egui::Checkbox::without_text(checked));
+                                } else {
+                                    ui.label("");
+                                }
 
-                            ui.label("Duplicate read_file removed:");
-                            ui.label(format!("{}", preview.duplicate_read_file_removed));
-                            ui.end_row();
+                                ui.label(egui::RichText::new(&cat.tool_name).monospace().small());
+                                ui.label(egui::RichText::new(format!("{}", cat.count)).small());
+
+                                let size_text = if cat.cleanable_bytes > 0 {
+                                    format!(
+                                        "{} ({})",
+                                        format_bytes(cat.total_bytes),
+                                        format_bytes(cat.cleanable_bytes)
+                                    )
+                                } else {
+                                    format!("{} (protected)", format_bytes(cat.total_bytes))
+                                };
+                                ui.label(egui::RichText::new(size_text).small());
+                                ui.end_row();
+                            }
                         });
+
+                    // Calculate estimated savings from checked categories
+                    let tool_savings: usize = analysis
+                        .categories
+                        .iter()
+                        .filter(|c| {
+                            self.category_checks
+                                .get(&c.tool_name)
+                                .copied()
+                                .unwrap_or(false)
+                        })
+                        .map(|c| c.cleanable_bytes)
+                        .sum();
+
+                    // Add thinking/reasoning savings from preview if available
+                    let thinking_savings = self
+                        .cleanup_preview
+                        .as_ref()
+                        .map(|p| p.bytes_to_remove)
+                        .unwrap_or(0);
+
+                    let total_savings = tool_savings + thinking_savings;
 
                     ui.add_space(8.0);
+                    if let Some(stats) = &self.thread_stats {
+                        let new_est = stats.uncompressed_size.saturating_sub(total_savings);
+                        let pct = if stats.uncompressed_size > 0 {
+                            total_savings as f64 / stats.uncompressed_size as f64 * 100.0
+                        } else {
+                            0.0
+                        };
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "Estimated: {} -> {} (-{:.1}%)",
+                                format_bytes(stats.uncompressed_size),
+                                format_bytes(new_est),
+                                pct,
+                            ))
+                            .strong()
+                            .color(if pct > 10.0 {
+                                egui::Color32::from_rgb(60, 200, 120)
+                            } else {
+                                ui.visuals().text_color()
+                            }),
+                        );
+                    }
                 }
 
+                ui.add_space(8.0);
+
                 // Warning
-                ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("/!\\ Close this thread in Zed before cleanup!")
@@ -1136,7 +1202,7 @@ impl ZedContextCleanerApp {
                 });
                 ui.add_space(4.0);
 
-                // Backup & Cleanup button
+                // Buttons
                 ui.horizontal(|ui| {
                     if ui
                         .add_sized(
@@ -1148,7 +1214,6 @@ impl ZedContextCleanerApp {
                         self.dialog = DialogState::ConfirmCleanup;
                     }
 
-                    // Restore button — opens modal with backup list
                     if ui
                         .add_sized(
                             [180.0, 36.0],
@@ -1480,6 +1545,23 @@ impl eframe::App for ZedContextCleanerApp {
                     self.keep_last_n
                 );
                 self.cleanup_preview = Some(cleaner::preview_cleanup(thread, &config, raw));
+
+                // Re-run analysis (keep_last_n affects protected zone / cleanable_bytes)
+                let analysis = cleaner::analyze_thread(thread, self.keep_last_n);
+                // Preserve existing checkbox states, only add new tools with smart default
+                for cat in &analysis.categories {
+                    self.category_checks
+                        .entry(cat.tool_name.clone())
+                        .or_insert(cat.cleanable_bytes > 10_000);
+                }
+                // Remove tools no longer present
+                let tool_names: std::collections::HashSet<String> = analysis
+                    .categories
+                    .iter()
+                    .map(|c| c.tool_name.clone())
+                    .collect();
+                self.category_checks.retain(|k, _| tool_names.contains(k));
+                self.thread_analysis = Some(analysis);
             }
             self.preview_dirty = false;
         }

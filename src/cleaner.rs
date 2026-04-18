@@ -1,6 +1,6 @@
 use crate::types::{
-    AgentContent, AgentMessage, CleanupPreview, DbThread, Message, ThreadStats, TokenUsage,
-    ToolResult, ToolUseBlock,
+    AgentContent, AgentMessage, CleanupPreview, DbThread, Message, ThreadAnalysis, ThreadStats,
+    TokenUsage, ToolCategoryStats, ToolResult, ToolUseBlock,
 };
 use serde_json::Value;
 use std::collections::HashMap;
@@ -39,6 +39,12 @@ pub struct CleanConfig {
     pub terminal_limit: usize,
     pub read_file_limit: usize,
     pub search_limit: usize,
+    /// Tool names to skip during cleanup (leave their results untouched).
+    pub skip_tool_names: Vec<String>,
+    /// Remove large images/files from old User messages
+    pub remove_large_images: bool,
+    /// Threshold in bytes for image/file removal (default 10KB)
+    pub large_image_threshold: usize,
 }
 
 impl Default for CleanConfig {
@@ -48,6 +54,9 @@ impl Default for CleanConfig {
             terminal_limit: 2000,
             read_file_limit: 3000,
             search_limit: 2000,
+            skip_tool_names: Vec::new(),
+            remove_large_images: true,
+            large_image_threshold: 10_000,
         }
     }
 }
@@ -138,7 +147,15 @@ pub fn clean_thread(thread: &DbThread, config: &CleanConfig) -> DbThread {
                 msg.clone()
             } else {
                 match msg {
-                    Message::User { .. } => msg.clone(),
+                    Message::User { user } => {
+                        if config.remove_large_images {
+                            Message::User {
+                                user: clean_user_message(user, config),
+                            }
+                        } else {
+                            msg.clone()
+                        }
+                    }
                     Message::Agent { agent } => Message::Agent {
                         agent: clean_agent_message(agent, config, &duplicate_ids),
                     },
@@ -209,7 +226,7 @@ pub fn clean_thread(thread: &DbThread, config: &CleanConfig) -> DbThread {
 
 /// Returns a set of message indices that are "protected" (i.e. belong to the
 /// last N complete User→Agent dialog pairs).
-fn compute_protected_indices(
+pub fn compute_protected_indices(
     messages: &[Message],
     keep_last_n: usize,
 ) -> std::collections::HashSet<usize> {
@@ -278,6 +295,94 @@ fn compute_duplicate_read_file_ids(
         }
     }
     dup_ids
+}
+
+/// Remove large Image/Mention blocks from User messages (non-protected).
+fn clean_user_message(
+    user: &crate::types::UserMessage,
+    config: &CleanConfig,
+) -> crate::types::UserMessage {
+    use crate::types::UserContent;
+
+    let cleaned_content: Vec<UserContent> = user
+        .content
+        .iter()
+        .map(|c| {
+            match c {
+                UserContent::Other(val) => {
+                    // Check for {"Image": {"source": "base64..."}} pattern
+                    if let Some(img) = val.get("Image") {
+                        let size = serde_json::to_string(img).unwrap_or_default().len();
+                        if size > config.large_image_threshold {
+                            // Extract filename if possible
+                            let label = img
+                                .get("source")
+                                .and_then(|s| s.as_str())
+                                .map(|s| {
+                                    if s.starts_with("iVBOR") {
+                                        "PNG image"
+                                    } else if s.starts_with("/9j/") {
+                                        "JPEG image"
+                                    } else if s.starts_with("R0lG") {
+                                        "GIF image"
+                                    } else {
+                                        "image"
+                                    }
+                                })
+                                .unwrap_or("image");
+                            let placeholder = format!(
+                                "[REMOVED: {}, original {} base64]",
+                                label,
+                                truncate_utf8_label(size)
+                            );
+                            return UserContent::Other(serde_json::json!({
+                                "Image": {"source": placeholder}
+                            }));
+                        }
+                    }
+                    // Check for {"Mention": {"content": "huge text..."}} pattern
+                    if let Some(mention) = val.get("Mention") {
+                        if let Some(content) = mention.get("content").and_then(|c| c.as_str()) {
+                            if content.len() > config.large_image_threshold {
+                                let uri = mention
+                                    .get("uri")
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null);
+                                let placeholder = format!(
+                                    "[CONTENT TRUNCATED: original {}]",
+                                    truncate_utf8_label(content.len())
+                                );
+                                return UserContent::Other(serde_json::json!({
+                                    "Mention": {
+                                        "uri": uri,
+                                        "content": placeholder
+                                    }
+                                }));
+                            }
+                        }
+                    }
+                    c.clone()
+                }
+                _ => c.clone(),
+            }
+        })
+        .collect();
+
+    crate::types::UserMessage {
+        id: user.id.clone(),
+        content: cleaned_content,
+    }
+}
+
+/// Format byte size as human-readable label
+fn truncate_utf8_label(bytes: usize) -> String {
+    if bytes < 1024 {
+        format!("{} B", bytes)
+    } else if bytes < 1024 * 1024 {
+        format!("{:.1} KB", bytes as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+    }
 }
 
 fn clean_agent_message(
@@ -367,6 +472,15 @@ fn clean_tool_result(
     config: &CleanConfig,
     duplicate_ids: &std::collections::HashSet<String>,
 ) -> ToolResult {
+    // If tool is in the skip list, leave it untouched.
+    if config
+        .skip_tool_names
+        .iter()
+        .any(|n| n == &result.tool_name)
+    {
+        return result.clone();
+    }
+
     // Check if this is a duplicate read_file result.
     if duplicate_ids.contains(&result.tool_use_id) {
         return ToolResult {
@@ -611,6 +725,118 @@ pub fn compute_stats(thread: &DbThread, raw_json: &str, compressed_size: usize) 
     stats.tool_call_counts = counts;
 
     stats
+}
+
+// ---------------------------------------------------------------------------
+// Thread analysis (per-tool-category breakdown)
+// ---------------------------------------------------------------------------
+
+pub fn analyze_thread(thread: &DbThread, keep_last_n: usize) -> ThreadAnalysis {
+    let protected = compute_protected_indices(&thread.messages, keep_last_n);
+
+    let mut cat_map: std::collections::HashMap<String, (usize, usize, usize, usize, usize)> =
+        std::collections::HashMap::new();
+    // map: tool_name -> (count, total_bytes, max_bytes, in_protected_count, cleanable_bytes)
+
+    let mut total_tool_result_bytes: usize = 0;
+    let mut total_agent_text_bytes: usize = 0;
+    let mut total_tool_use_bytes: usize = 0;
+    let mut total_user_bytes: usize = 0;
+    let mut message_count: usize = 0;
+
+    for (idx, msg) in thread.messages.iter().enumerate() {
+        message_count += 1;
+        match msg {
+            Message::User { user: u } => {
+                for content in &u.content {
+                    match content {
+                        crate::types::UserContent::Text { text } => {
+                            total_user_bytes += text.len();
+                        }
+                        crate::types::UserContent::Other(v) => {
+                            total_user_bytes += v.to_string().len();
+                        }
+                    }
+                }
+            }
+            Message::Agent { agent } => {
+                let is_protected = protected.contains(&idx);
+
+                for content in &agent.content {
+                    match content {
+                        AgentContent::Text(t) => {
+                            total_agent_text_bytes += t.len();
+                        }
+                        AgentContent::ToolUse(tu) => {
+                            total_tool_use_bytes += tu.raw_input.as_ref().map_or(0, |s| s.len());
+                        }
+                        _ => {}
+                    }
+                }
+
+                if let Some(ref tr) = agent.tool_results {
+                    for result in tr.values() {
+                        let bytes = result
+                            .content
+                            .as_ref()
+                            .map(|c| {
+                                extract_content_text(c).map(|s| s.len()).unwrap_or_else(|| {
+                                    serde_json::to_string(c).unwrap_or_default().len()
+                                })
+                            })
+                            .unwrap_or(0);
+                        total_tool_result_bytes += bytes;
+
+                        let entry = cat_map
+                            .entry(result.tool_name.clone())
+                            .or_insert((0, 0, 0, 0, 0));
+                        entry.0 += 1; // count
+                        entry.1 += bytes; // total_bytes
+                        if bytes > entry.2 {
+                            entry.2 = bytes; // max_bytes
+                        }
+                        if is_protected {
+                            entry.3 += 1; // in_protected
+                        } else {
+                            entry.4 += bytes; // cleanable_bytes
+                        }
+                    }
+                }
+            }
+            Message::Other(_) => {}
+        }
+    }
+
+    let mut categories: Vec<ToolCategoryStats> = cat_map
+        .into_iter()
+        .map(
+            |(name, (count, total_bytes, max_bytes, in_protected, cleanable_bytes))| {
+                ToolCategoryStats {
+                    tool_name: name,
+                    count,
+                    total_bytes,
+                    max_bytes,
+                    in_protected,
+                    cleanable_bytes,
+                }
+            },
+        )
+        .collect();
+    categories.sort_by(|a, b| b.total_bytes.cmp(&a.total_bytes));
+
+    let grand_total_bytes =
+        total_tool_result_bytes + total_agent_text_bytes + total_tool_use_bytes + total_user_bytes;
+
+    ThreadAnalysis {
+        categories,
+        total_tool_result_bytes,
+        total_agent_text_bytes,
+        total_tool_use_bytes,
+        total_user_bytes,
+        grand_total_bytes,
+        message_count,
+        protected_message_count: protected.len(),
+    }
 }
 
 // ===========================================================================
