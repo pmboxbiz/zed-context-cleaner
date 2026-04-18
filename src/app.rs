@@ -1090,8 +1090,7 @@ impl ZedContextCleanerApp {
                 // Always cleaned (info)
                 ui.label(
                     egui::RichText::new("Always removed: Thinking blocks, reasoning_details, initial_project_snapshot")
-                        .small()
-                        .color(egui::Color32::GRAY),
+                        .strong(),
                 );
 
                 ui.add_space(2.0);
