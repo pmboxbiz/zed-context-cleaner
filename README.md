@@ -2,6 +2,8 @@
 
 A desktop utility for cleaning and compressing Zed IDE AI chat history stored in `threads.db`. Removes `Thinking` blocks, truncates large `tool_results`, nulls out `initial_project_snapshot`, and recalculates token usage — all without losing your actual conversation context.
 
+![Zed Context Cleaner — Main Window](images/Screenshot_1.png)
+
 ## Why You Need This
 
 Zed stores every AI chat thread as a JSON blob (optionally zstd-compressed) in a SQLite database. Over time, threads balloon in size due to:
@@ -10,8 +12,11 @@ Zed stores every AI chat thread as a JSON blob (optionally zstd-compressed) in a
 - **Tool results** — `terminal`, `read_file`, `grep` outputs that can be megabytes each
 - **Project snapshots** — large initial context dumps attached to the thread
 
-A single long thread can easily reach 5-20 MB. When the context grows too large, Zed starts throwing errors like:
+A single long thread can easily reach 5-20 MB. When the context grows too large, Zed starts throwing errors:
 
+![Zed error: prompt is too long](images/Screenshot_13.png)
+
+- **Failed to connect to API: 400 Bad Request** — `invalid_request_error: prompt is too long: N tokens > 1000000 maximum`
 - **Error: Failed to generate summary**
 - **max token limit reached**
 - **prompt token count exceeds**
