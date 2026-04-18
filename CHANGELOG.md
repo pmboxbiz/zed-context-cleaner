@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2025-04-18
+
+### Fixed
+
+- **Estimated savings accuracy** — now calculates actual savings (`original_size - truncated_limit`) instead of counting full size of cleanable results
+- **`edit_file` diffs now truncated** — removed from PRESERVE_TOOLS; large diffs (40-150 KB) are truncated to 2 KB like other tool results
+- **Output field savings** — `output` field size now included in savings estimation
+
+### Changed
+
+- "Always removed" label is now bold with normal text color (was small gray)
+
 ## [0.2.0] - 2025-04-18
 
 ### Added
