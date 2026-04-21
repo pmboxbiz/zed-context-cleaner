@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2025-04-21
+
+### Fixed
+
+- **Zed compatibility: stripped tool inputs** — `raw_input` now set to `"{}"` (empty JSON string) and `input` to `{}` (empty object) instead of `null`, which caused Zed error `invalid type: null, expected a string`
+- **Zed compatibility: output field** — added `skip_serializing_if` so `None` output is omitted from JSON instead of serialized as `null`
+- **Restore dialog** — now shows backup date/time and file size for each backup entry
+
 ## [0.3.0] - 2025-04-21
 
 ### Added
