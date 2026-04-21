@@ -231,13 +231,16 @@ Truncated results get a suffix: `... [TRUNCATED: N bytes omitted]`
 |--------------------------------|----------------------------------------------------------------|
 | `Thinking` blocks              | Removed from non-protected agent messages                      |
 | `RedactedThinking` blocks      | Removed from non-protected agent messages                      |
-| `reasoning_details`            | Set to `null`                                                  |
+| `reasoning_details`            | Removed entirely from non-protected agent messages             |
 | `initial_project_snapshot`     | Set to `null`                                                  |
 | Duplicate `read_file` results  | Replaced with placeholder; only the **last** call is kept      |
 | `request_token_usage`          | Recalculated (orphaned entries removed)                        |
 | `cumulative_token_usage`       | Recalculated from remaining usage entries                      |
 | Large `Image` blocks in User messages | Replaced with placeholder (optional, enabled by default) |
 | Large `Mention` attachments    | Content truncated, URI preserved (optional)                    |
+| `raw_input` / `input` in ToolUse | Nullified in old messages (optional, enabled by default)     |
+| `output` in tool_results       | Nullified — duplicates `content` (optional, enabled by default)|
+| Tool-only Agent messages       | Removed entirely if no Text response (optional, disabled by default) |
 
 ### What Is Never Touched
 

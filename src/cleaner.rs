@@ -44,6 +44,12 @@ pub struct CleanConfig {
     pub remove_large_images: bool,
     /// Threshold in bytes for image/file removal (default 10KB)
     pub large_image_threshold: usize,
+    /// Nullify `raw_input` and `input` in ToolUse blocks (old messages only)
+    pub strip_tool_inputs: bool,
+    /// Nullify `output` field in tool_results (it duplicates content)
+    pub strip_tool_output: bool,
+    /// Remove Agent messages that contain only ToolUse (no Text response)
+    pub remove_tool_only_messages: bool,
 }
 
 impl Default for CleanConfig {
@@ -56,6 +62,9 @@ impl Default for CleanConfig {
             skip_tool_names: Vec::new(),
             remove_large_images: true,
             large_image_threshold: 10_000,
+            strip_tool_inputs: true,
+            strip_tool_output: true,
+            remove_tool_only_messages: false,
         }
     }
 }
@@ -141,25 +150,36 @@ pub fn clean_thread(thread: &DbThread, config: &CleanConfig) -> DbThread {
         .messages
         .iter()
         .enumerate()
-        .map(|(idx, msg)| {
+        .filter_map(|(idx, msg)| {
             if protected_set.contains(&idx) {
-                msg.clone()
-            } else {
-                match msg {
-                    Message::User { user } => {
-                        if config.remove_large_images {
-                            Message::User {
-                                user: clean_user_message(user, config),
-                            }
-                        } else {
-                            msg.clone()
+                return Some(msg.clone());
+            }
+            match msg {
+                Message::User { user } => {
+                    if config.remove_large_images {
+                        Some(Message::User {
+                            user: clean_user_message(user, config),
+                        })
+                    } else {
+                        Some(msg.clone())
+                    }
+                }
+                Message::Agent { agent } => {
+                    // 5. Remove tool-only Agent messages (no Text block)
+                    if config.remove_tool_only_messages {
+                        let has_text = agent
+                            .content
+                            .iter()
+                            .any(|c| matches!(c, AgentContent::Text(_)));
+                        if !has_text {
+                            return None; // Remove entirely
                         }
                     }
-                    Message::Agent { agent } => Message::Agent {
+                    Some(Message::Agent {
                         agent: clean_agent_message(agent, config, &duplicate_ids),
-                    },
-                    Message::Other(_) => msg.clone(),
+                    })
                 }
+                Message::Other(_) => Some(msg.clone()),
             }
         })
         .collect();
@@ -390,11 +410,26 @@ fn clean_agent_message(
     duplicate_ids: &std::collections::HashSet<String>,
 ) -> AgentMessage {
     // a. Filter content: remove Thinking and RedactedThinking.
+    //    Optionally strip input/raw_input from ToolUse blocks.
     let cleaned_content: Vec<AgentContent> = agent
         .content
         .iter()
         .filter(|c| matches!(c, AgentContent::Text(_) | AgentContent::ToolUse(_)))
-        .cloned()
+        .map(|c| {
+            if config.strip_tool_inputs {
+                if let AgentContent::ToolUse(tu) = c {
+                    return AgentContent::ToolUse(ToolUseBlock {
+                        id: tu.id.clone(),
+                        name: tu.name.clone(),
+                        raw_input: None,
+                        input: None,
+                        is_input_complete: tu.is_input_complete,
+                        thought_signature: None,
+                    });
+                }
+            }
+            c.clone()
+        })
         .collect();
 
     // b. reasoning_details — remove entirely (set to None, field skipped by skip_serializing_if)
@@ -489,7 +524,7 @@ fn clean_tool_result(
             content: Some(Value::String(
                 "[DUPLICATE READ_FILE RESULT REMOVED: see last call for this file]".to_string(),
             )),
-            output: result.output.clone(),
+            output: None, // Fix #4: clear output for duplicates too
         };
     }
 
@@ -509,29 +544,33 @@ fn clean_tool_result(
         (c, _) => c.clone(),
     };
 
-    // Truncate output at half the limit (same as Python: max_bytes // 2)
-    let cleaned_output = match (&result.output, limit) {
-        (Some(output_val), Some(lim)) => {
-            let half = lim / 2;
-            if let Some(text) = extract_content_text(output_val) {
-                if text.len() > half {
-                    let truncated = truncate_utf8(&text, half);
-                    Some(rewrap_content(output_val, truncated))
+    // #3: If strip_tool_output is enabled, just null the output entirely
+    let cleaned_output = if config.strip_tool_output {
+        None
+    } else {
+        // Truncate output at half the limit (same as Python: max_bytes // 2)
+        match (&result.output, limit) {
+            (Some(output_val), Some(lim)) => {
+                let half = lim / 2;
+                if let Some(text) = extract_content_text(output_val) {
+                    if text.len() > half {
+                        let truncated = truncate_utf8(&text, half);
+                        Some(rewrap_content(output_val, truncated))
+                    } else {
+                        result.output.clone()
+                    }
                 } else {
-                    result.output.clone()
-                }
-            } else {
-                // output is a JSON object/array — serialize, truncate, store as string
-                let serialized = serde_json::to_string(output_val).unwrap_or_default();
-                if serialized.len() > half {
-                    let truncated = truncate_utf8(&serialized, half);
-                    Some(serde_json::Value::String(truncated))
-                } else {
-                    result.output.clone()
+                    let serialized = serde_json::to_string(output_val).unwrap_or_default();
+                    if serialized.len() > half {
+                        let truncated = truncate_utf8(&serialized, half);
+                        Some(serde_json::Value::String(truncated))
+                    } else {
+                        result.output.clone()
+                    }
                 }
             }
+            (o, _) => o.clone(),
         }
-        (o, _) => o.clone(),
     };
 
     ToolResult {

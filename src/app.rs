@@ -114,6 +114,15 @@ pub struct ZedContextCleanerApp {
 
     /// Remove large images/files from old User messages
     remove_large_images: bool,
+
+    /// Nullify raw_input and input in ToolUse blocks
+    strip_tool_inputs: bool,
+
+    /// Nullify output field in tool_results
+    strip_tool_output: bool,
+
+    /// Remove Agent messages that contain only ToolUse (no Text)
+    remove_tool_only_messages: bool,
 }
 
 fn format_bytes(bytes: usize) -> String {
@@ -167,6 +176,9 @@ impl ZedContextCleanerApp {
             thread_analysis: None,
             category_checks: HashMap::new(),
             remove_large_images: true,
+            strip_tool_inputs: true,
+            strip_tool_output: true,
+            remove_tool_only_messages: false,
         };
 
         if let Some(path) = db::default_db_path() {
@@ -472,6 +484,9 @@ impl ZedContextCleanerApp {
 
         let keep_last_n = self.keep_last_n;
         let remove_large_images = self.remove_large_images;
+        let strip_tool_inputs = self.strip_tool_inputs;
+        let strip_tool_output = self.strip_tool_output;
+        let remove_tool_only_messages = self.remove_tool_only_messages;
         let skip_tool_names: Vec<String> = self
             .category_checks
             .iter()
@@ -528,6 +543,9 @@ impl ZedContextCleanerApp {
                     keep_last_n_dialogs: keep_last_n,
                     skip_tool_names,
                     remove_large_images,
+                    strip_tool_inputs,
+                    strip_tool_output,
+                    remove_tool_only_messages,
                     ..Default::default()
                 };
                 let cleaned = cleaner::clean_thread(&thread, &config);
@@ -1095,6 +1113,9 @@ impl ZedContextCleanerApp {
 
                 ui.add_space(2.0);
                 ui.checkbox(&mut self.remove_large_images, "Remove large images/files from old messages");
+                ui.checkbox(&mut self.strip_tool_inputs, "Strip tool inputs (raw_input, input) from old messages");
+                ui.checkbox(&mut self.strip_tool_output, "Strip output field from tool results (duplicates content)");
+                ui.checkbox(&mut self.remove_tool_only_messages, "Remove tool-only Agent messages (no text response)");
 
                 ui.add_space(6.0);
 
@@ -1142,86 +1163,35 @@ impl ZedContextCleanerApp {
                             }
                         });
 
-                    // Calculate estimated savings from checked categories
-                    let tool_savings: usize = analysis
-                        .categories
-                        .iter()
-                        .filter(|c| {
-                            self.category_checks
-                                .get(&c.tool_name)
-                                .copied()
-                                .unwrap_or(false)
-                        })
-                        .map(|c| c.cleanable_bytes)
-                        .sum();
-
-                    // Add thinking/reasoning savings from preview if available
-                    let thinking_savings = self
-                        .cleanup_preview
-                        .as_ref()
-                        .map(|p| p.bytes_to_remove)
-                        .unwrap_or(0);
-
-                    // Calculate image/attachment savings from non-protected User messages
-                    let image_savings: usize = if self.remove_large_images {
-                        if let Some(thread) = &self.loaded_thread {
-                            let protected = cleaner::compute_protected_indices(
-                                &thread.messages,
-                                self.keep_last_n,
-                            );
-                            let threshold = 10_000usize;
-                            thread
-                                .messages
-                                .iter()
-                                .enumerate()
-                                .filter(|(idx, _)| !protected.contains(idx))
-                                .filter_map(|(_, msg)| {
-                                    if let Message::User { user } = msg {
-                                        Some(&user.content)
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .flatten()
-                                .filter_map(|c| {
-                                    if let crate::types::UserContent::Other(val) = c {
-                                        let size =
-                                            serde_json::to_string(val).unwrap_or_default().len();
-                                        if size > threshold {
-                                            // Check if it's Image or large Mention
-                                            if val.get("Image").is_some() {
-                                                Some(size)
-                                            } else if let Some(mention) = val.get("Mention") {
-                                                if let Some(content) =
-                                                    mention.get("content").and_then(|c| c.as_str())
-                                                {
-                                                    if content.len() > threshold {
-                                                        Some(size)
-                                                    } else {
-                                                        None
-                                                    }
-                                                } else {
-                                                    None
-                                                }
-                                            } else {
-                                                None
-                                            }
-                                        } else {
-                                            None
-                                        }
-                                    } else {
-                                        None
-                                    }
-                                })
-                                .sum()
+                    // Accurate estimation: simulate full cleanup and compare sizes
+                    let total_savings: usize = if let Some(thread) = &self.loaded_thread {
+                        let skip_tool_names: Vec<String> = self
+                            .category_checks
+                            .iter()
+                            .filter(|(_, enabled)| !**enabled)
+                            .map(|(name, _)| name.clone())
+                            .collect();
+                        let sim_config = cleaner::CleanConfig {
+                            keep_last_n_dialogs: self.keep_last_n,
+                            skip_tool_names,
+                            remove_large_images: self.remove_large_images,
+                            strip_tool_inputs: self.strip_tool_inputs,
+                            strip_tool_output: self.strip_tool_output,
+                            remove_tool_only_messages: self.remove_tool_only_messages,
+                            ..Default::default()
+                        };
+                        let cleaned = cleaner::clean_thread(thread, &sim_config);
+                        let cleaned_size = serde_json::to_string_pretty(&cleaned)
+                            .map(|s| s.len())
+                            .unwrap_or(0);
+                        if let Some(stats) = &self.thread_stats {
+                            stats.uncompressed_size.saturating_sub(cleaned_size)
                         } else {
                             0
                         }
                     } else {
                         0
                     };
-
-                    let total_savings = tool_savings + thinking_savings + image_savings;
 
                     ui.add_space(8.0);
                     if let Some(stats) = &self.thread_stats {

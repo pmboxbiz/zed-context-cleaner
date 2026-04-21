@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2025-04-21
+
+### Added
+
+- **Strip tool inputs** — nullify `raw_input` and `input` in ToolUse blocks for old messages (enabled by default). Removes duplicate command/script text that bloats context.
+- **Strip tool output** — nullify `output` field in tool_results which almost always duplicates `content` (enabled by default). Fixes 70KB+ untruncated diffs in edit_file output.
+- **Remove tool-only Agent messages** — optionally delete Agent messages that contain only ToolUse blocks with no Text response (disabled by default, aggressive cleanup).
+- **Accurate estimation** — Estimated savings now runs a full cleanup simulation instead of approximating, so the displayed size matches the actual result.
+- GUI checkboxes for all new cleanup options in Cleanup Options section.
+
+### Fixed
+
+- **Duplicate read_file output** — `output` field now cleared (set to null) when content is replaced with dedup placeholder. Previously output kept full file content even after dedup.
+- **edit_file output field** — was storing 70KB+ full diffs in `output` while `content` was truncated to 2KB. Now `output` is nullified by default.
+
 ## [0.2.1] - 2025-04-18
 
 ### Fixed
