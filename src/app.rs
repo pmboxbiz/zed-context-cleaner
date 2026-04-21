@@ -97,8 +97,8 @@ pub struct ZedContextCleanerApp {
     /// Modal dialog state
     dialog: DialogState,
 
-    /// Available backup files for the selected thread
-    backup_list: Vec<(String, PathBuf)>,
+    /// Available backup files for the selected thread: (filename, path, date, size)
+    backup_list: Vec<(String, PathBuf, String, String)>,
 
     /// Channel receiver for background cleanup result
     cleanup_rx: Option<mpsc::Receiver<Result<CleanupDone, String>>>,
@@ -435,7 +435,22 @@ impl ZedContextCleanerApp {
                 .to_string();
             // Match by full thread_id in filename
             if fname.contains(thread_id) {
-                self.backup_list.push((fname, path));
+                let meta = std::fs::metadata(&path);
+                let size_str = meta
+                    .as_ref()
+                    .ok()
+                    .map(|m| format_bytes(m.len() as usize))
+                    .unwrap_or_default();
+                let date_str = meta
+                    .as_ref()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| {
+                        let dt: chrono::DateTime<chrono::Local> = t.into();
+                        dt.format("%Y-%m-%d %H:%M:%S").to_string()
+                    })
+                    .unwrap_or_default();
+                self.backup_list.push((fname, path, date_str, size_str));
             }
         }
         // Sort newest first
@@ -1456,12 +1471,21 @@ impl ZedContextCleanerApp {
                             egui::ScrollArea::vertical()
                                 .max_height(250.0)
                                 .show(ui, |ui| {
-                                    for (fname, path) in &self.backup_list {
-                                        // Extract timestamp and summary from filename
+                                    for (fname, path, date_str, size_str) in &self.backup_list {
                                         let display = fname.trim_end_matches(".json");
                                         ui.horizontal(|ui| {
                                             ui.label(
                                                 egui::RichText::new(display).small().monospace(),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(date_str)
+                                                    .small()
+                                                    .color(egui::Color32::GRAY),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(size_str)
+                                                    .small()
+                                                    .color(egui::Color32::GRAY),
                                             );
                                             if ui.small_button("Restore").clicked() {
                                                 if let Some(ref id) = self.selected_thread_id {

@@ -141,6 +141,7 @@ pub struct ToolResult {
     pub tool_name: String,
     pub is_error: bool,
     pub content: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output: Option<Value>,
 }
 

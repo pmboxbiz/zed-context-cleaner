@@ -421,10 +421,10 @@ fn clean_agent_message(
                     return AgentContent::ToolUse(ToolUseBlock {
                         id: tu.id.clone(),
                         name: tu.name.clone(),
-                        raw_input: None,
-                        input: None,
+                        raw_input: Some("{}".to_string()),
+                        input: Some(serde_json::json!({})),
                         is_input_complete: tu.is_input_complete,
-                        thought_signature: None,
+                        thought_signature: tu.thought_signature.clone(),
                     });
                 }
             }
