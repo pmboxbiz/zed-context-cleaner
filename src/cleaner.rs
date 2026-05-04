@@ -161,7 +161,12 @@ pub fn clean_thread(thread: &DbThread, config: &CleanConfig) -> DbThread {
                         let fixed_content: Vec<AgentContent> = agent
                             .content
                             .iter()
-                            .filter(|c| !matches!(c, AgentContent::RedactedThinking(_)))
+                            .filter(|c| {
+                                !matches!(
+                                    c,
+                                    AgentContent::RedactedThinking(_) | AgentContent::Thinking(_)
+                                )
+                            })
                             .cloned()
                             .collect();
                         return Some(Message::Agent {
@@ -204,6 +209,39 @@ pub fn clean_thread(thread: &DbThread, config: &CleanConfig) -> DbThread {
             }
         })
         .collect();
+
+    // 3b. If fix_redacted_thinking — strip from ALL messages unconditionally
+    let cleaned_messages: Vec<Message> = if config.fix_redacted_thinking {
+        cleaned_messages
+            .into_iter()
+            .map(|msg| {
+                if let Message::Agent { agent } = &msg {
+                    let fixed: Vec<AgentContent> = agent
+                        .content
+                        .iter()
+                        .filter(|c| {
+                            !matches!(
+                                c,
+                                AgentContent::Thinking(_) | AgentContent::RedactedThinking(_)
+                            )
+                        })
+                        .cloned()
+                        .collect();
+                    Message::Agent {
+                        agent: AgentMessage {
+                            content: fixed,
+                            tool_results: agent.tool_results.clone(),
+                            reasoning_details: None,
+                        },
+                    }
+                } else {
+                    msg
+                }
+            })
+            .collect()
+    } else {
+        cleaned_messages
+    };
 
     // 4. Collect remaining user message ids.
     let user_ids: std::collections::HashSet<String> = cleaned_messages
@@ -663,7 +701,7 @@ pub fn preview_cleanup(thread: &DbThread, config: &CleanConfig, raw_json: &str) 
                     }
                     AgentContent::RedactedThinking(r) => {
                         thinking_blocks_removed += 1;
-                        bytes_to_remove += r.data.as_ref().map_or(0, |d| d.len());
+                        bytes_to_remove += serde_json::to_string(r).unwrap_or_default().len();
                     }
                     _ => {}
                 }
@@ -751,7 +789,8 @@ pub fn compute_stats(thread: &DbThread, raw_json: &str, compressed_size: usize) 
                             stats.thinking_bytes += t.signature.as_ref().map_or(0, |s| s.len());
                         }
                         AgentContent::RedactedThinking(r) => {
-                            stats.thinking_bytes += r.data.as_ref().map_or(0, |d| d.len());
+                            stats.thinking_bytes +=
+                                serde_json::to_string(r).unwrap_or_default().len();
                         }
                         AgentContent::Text(t) => {
                             stats.text_bytes += t.len();

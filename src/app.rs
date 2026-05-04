@@ -463,6 +463,13 @@ impl ZedContextCleanerApp {
 
     fn start_backup_and_cleanup(&mut self, ctx: &egui::Context) {
         log::info!("Starting backup & cleanup (background)");
+        log::info!(
+            "Config: keep_last_n={} fix_redacted_thinking={} strip_inputs={} strip_output={}",
+            self.keep_last_n,
+            self.fix_redacted_thinking,
+            self.strip_tool_inputs,
+            self.strip_tool_output
+        );
 
         let thread_id = match &self.selected_thread_id {
             Some(id) => id.clone(),

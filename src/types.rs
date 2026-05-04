@@ -108,7 +108,7 @@ pub struct AgentMessage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentContent {
     Thinking(ThinkingBlock),
-    RedactedThinking(RedactedThinkingBlock),
+    RedactedThinking(Value),
     Text(String),
     ToolUse(ToolUseBlock),
 }
@@ -117,11 +117,6 @@ pub enum AgentContent {
 pub struct ThinkingBlock {
     pub text: String,
     pub signature: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RedactedThinkingBlock {
-    pub data: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

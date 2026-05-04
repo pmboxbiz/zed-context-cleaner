@@ -88,6 +88,7 @@ fn print_usage() {
     eprintln!("  zed-context-cleaner clean <thread_id>        Backup & clean a thread");
     eprintln!("  zed-context-cleaner clean <title>            Search by title and clean");
     eprintln!("  zed-context-cleaner clean <id_or_title> -n 5 Keep last 5 dialogs (default: 10)");
+    eprintln!("  zed-context-cleaner clean <id_or_title> --fix-thinking  Fix GPT->Claude switch");
     eprintln!("  zed-context-cleaner restore <backup_file>    Restore thread from backup JSON");
     eprintln!();
     eprintln!("Examples:");
@@ -178,7 +179,7 @@ fn cmd_list() -> Result<(), String> {
     Ok(())
 }
 
-fn cmd_clean(thread_id: &str, keep_last_n: usize) -> Result<(), String> {
+fn cmd_clean(thread_id: &str, keep_last_n: usize, fix_thinking: bool) -> Result<(), String> {
     let db_path = get_db_path()?;
     let conn = db::open_db(&db_path).map_err(|e| format!("Failed to open DB: {}", e))?;
 
@@ -210,8 +211,7 @@ fn cmd_clean(thread_id: &str, keep_last_n: usize) -> Result<(), String> {
     let pretty_backup = {
         let v: serde_json::Value = serde_json::from_str(&raw_json)
             .map_err(|e| format!("Failed to parse JSON for backup: {}", e))?;
-        serde_json::to_string_pretty(&v)
-            .map_err(|e| format!("Failed to format JSON: {}", e))?
+        serde_json::to_string_pretty(&v).map_err(|e| format!("Failed to format JSON: {}", e))?
     };
     std::fs::write(&backup_path, &pretty_backup)
         .map_err(|e| format!("Failed to write backup: {}", e))?;
@@ -220,6 +220,7 @@ fn cmd_clean(thread_id: &str, keep_last_n: usize) -> Result<(), String> {
     // Clean
     let config = cleaner::CleanConfig {
         keep_last_n_dialogs: keep_last_n,
+        fix_redacted_thinking: fix_thinking,
         ..Default::default()
     };
     println!("  Cleaning (keep last {} dialogs)...", keep_last_n);
@@ -344,8 +345,9 @@ fn run_cli(args: &[String]) -> Result<(), String> {
             }
             let query = &args[2];
             let mut keep_last_n: usize = 10;
+            let mut fix_thinking = false;
 
-            // Parse optional -n flag
+            // Parse optional flags
             let mut i = 3;
             while i < args.len() {
                 if args[i] == "-n" && i + 1 < args.len() {
@@ -353,13 +355,16 @@ fn run_cli(args: &[String]) -> Result<(), String> {
                         .parse()
                         .map_err(|_| format!("Invalid number: {}", args[i + 1]))?;
                     i += 2;
+                } else if args[i] == "--fix-thinking" {
+                    fix_thinking = true;
+                    i += 1;
                 } else {
                     return Err(format!("Unknown argument: {}", args[i]));
                 }
             }
 
             let thread_id = resolve_thread_id(query)?;
-            cmd_clean(&thread_id, keep_last_n)
+            cmd_clean(&thread_id, keep_last_n, fix_thinking)
         }
         "restore" => {
             if args.len() < 3 {
@@ -422,4 +427,3 @@ fn main() {
         }
     }
 }
-
