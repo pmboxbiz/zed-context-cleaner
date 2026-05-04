@@ -123,6 +123,9 @@ pub struct ZedContextCleanerApp {
 
     /// Remove Agent messages that contain only ToolUse (no Text)
     remove_tool_only_messages: bool,
+
+    /// Fix GPT->Claude switch error by removing RedactedThinking from all messages
+    fix_redacted_thinking: bool,
 }
 
 fn format_bytes(bytes: usize) -> String {
@@ -179,6 +182,7 @@ impl ZedContextCleanerApp {
             strip_tool_inputs: true,
             strip_tool_output: true,
             remove_tool_only_messages: false,
+            fix_redacted_thinking: false,
         };
 
         if let Some(path) = db::default_db_path() {
@@ -502,6 +506,7 @@ impl ZedContextCleanerApp {
         let strip_tool_inputs = self.strip_tool_inputs;
         let strip_tool_output = self.strip_tool_output;
         let remove_tool_only_messages = self.remove_tool_only_messages;
+        let fix_redacted_thinking = self.fix_redacted_thinking;
         let skip_tool_names: Vec<String> = self
             .category_checks
             .iter()
@@ -561,6 +566,7 @@ impl ZedContextCleanerApp {
                     strip_tool_inputs,
                     strip_tool_output,
                     remove_tool_only_messages,
+                    fix_redacted_thinking,
                     ..Default::default()
                 };
                 let cleaned = cleaner::clean_thread(&thread, &config);
@@ -1131,6 +1137,7 @@ impl ZedContextCleanerApp {
                 ui.checkbox(&mut self.strip_tool_inputs, "Strip tool inputs (raw_input, input) from old messages");
                 ui.checkbox(&mut self.strip_tool_output, "Strip output field from tool results (duplicates content)");
                 ui.checkbox(&mut self.remove_tool_only_messages, "Remove tool-only Agent messages (no text response)");
+                ui.checkbox(&mut self.fix_redacted_thinking, "Fix GPT->Claude switch (remove RedactedThinking from all messages)");
 
                 ui.add_space(6.0);
 
@@ -1193,6 +1200,7 @@ impl ZedContextCleanerApp {
                             strip_tool_inputs: self.strip_tool_inputs,
                             strip_tool_output: self.strip_tool_output,
                             remove_tool_only_messages: self.remove_tool_only_messages,
+                            fix_redacted_thinking: self.fix_redacted_thinking,
                             ..Default::default()
                         };
                         let cleaned = cleaner::clean_thread(thread, &sim_config);

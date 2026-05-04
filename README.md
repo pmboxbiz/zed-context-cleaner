@@ -17,6 +17,7 @@ A single long thread can easily reach 5-20 MB. When the context grows too large,
 ![Zed error: prompt is too long](images/Screenshot_13.png)
 
 - **Failed to connect to API: 400 Bad Request** — `invalid_request_error: prompt is too long: N tokens > 1000000 maximum`
+- **Invalid `data` in `redacted_thinking` block** — happens when switching from a thinking model (GPT 5.5, Claude Opus) to a non-thinking model (Sonnet 4.6). Use the "Fix GPT->Claude switch" checkbox.
 - **Error: Failed to generate summary**
 - **max token limit reached**
 - **prompt token count exceeds**

@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2025-05-04
+
+### Added
+
+- **Fix GPT->Claude switch** — new checkbox removes `RedactedThinking` blocks from ALL messages (including protected). Fixes Anthropic API error `Invalid data in redacted_thinking block` when switching from a thinking model (GPT 5.5, Claude Opus with extended thinking) to a non-thinking model (Sonnet 4.6).
+
 ## [0.3.1] - 2025-04-21
 
 ### Fixed

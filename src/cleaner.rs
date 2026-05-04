@@ -50,6 +50,8 @@ pub struct CleanConfig {
     pub strip_tool_output: bool,
     /// Remove Agent messages that contain only ToolUse (no Text response)
     pub remove_tool_only_messages: bool,
+    /// Remove RedactedThinking from ALL messages (including protected) — fixes GPT->Claude switch error
+    pub fix_redacted_thinking: bool,
 }
 
 impl Default for CleanConfig {
@@ -65,6 +67,7 @@ impl Default for CleanConfig {
             strip_tool_inputs: true,
             strip_tool_output: true,
             remove_tool_only_messages: false,
+            fix_redacted_thinking: false,
         }
     }
 }
@@ -152,6 +155,24 @@ pub fn clean_thread(thread: &DbThread, config: &CleanConfig) -> DbThread {
         .enumerate()
         .filter_map(|(idx, msg)| {
             if protected_set.contains(&idx) {
+                // Even in protected messages, fix redacted_thinking if requested
+                if config.fix_redacted_thinking {
+                    if let Message::Agent { agent } = msg {
+                        let fixed_content: Vec<AgentContent> = agent
+                            .content
+                            .iter()
+                            .filter(|c| !matches!(c, AgentContent::RedactedThinking(_)))
+                            .cloned()
+                            .collect();
+                        return Some(Message::Agent {
+                            agent: AgentMessage {
+                                content: fixed_content,
+                                tool_results: agent.tool_results.clone(),
+                                reasoning_details: agent.reasoning_details.clone(),
+                            },
+                        });
+                    }
+                }
                 return Some(msg.clone());
             }
             match msg {
